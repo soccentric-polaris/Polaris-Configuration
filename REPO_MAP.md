@@ -1,6 +1,6 @@
 # Polaris-Configuration
 
-**Remote:** `git@github.com:SiliconCentric/Polaris-Configuration.git`
+**Remote:** `git@github.com:soccentric-polaris/Polaris-Configuration.git`
 **Parent project:** [Polaris](../Polaris.md) (target hardware: **Renesas RZ/G2L**.)
 **Leaf type:** `<Project>-Configuration`
 **Status:** REAL — actively built out
