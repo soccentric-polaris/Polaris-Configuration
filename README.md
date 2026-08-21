@@ -1,86 +1,59 @@
-# SoCcentric WebConfig
+# Polaris-Configuration
 
-An **on-device, browser-based configuration web UI** for the Polaris
-Yocto/embedded-Linux platform (Renesas RZ/G2L). One small Rust daemon serves a vanilla-JS
-frontend over TLS; board-specific data lives in a single board-manifest file
-(`board-manifests/polaris.json`).
+## Project Summary
 
-> The full design specification lives in [`docs/webconfig-spec.md`](docs/webconfig-spec.md).
+- Polaris-Configuration is a Rust workspace for the on-device WebConfig
+  service used to configure Polaris embedded Linux boards. The
+  implementation is split between `crates/webconfig-engine`, which owns
+  configuration state, schemas, manifests, appliers, monitoring, and alert
+  behavior, and `crates/webconfigd`, which exposes the HTTP daemon. The
+  `frontend/` directory is a vanilla-JavaScript interface that renders
+  forms from JSON schemas, while `schemas/` and `board-manifests/` supply
+  board-aware configuration inputs. `meta-webconfig/` packages the daemon,
+  static assets, schemas, manifests, and hardened service integration for
+  Yocto.
 
-## What it is
+- The design uses a small single-threaded Tokio service with Axum and rustls,
+  using JSON and ring files instead of a database. The daemon surface
+  includes authentication, role-aware access, CSRF protection, TLS, section
+  APIs, and server-sent events. Network changes have a provisional
+  commit/confirm workflow intended to reconnect safely or roll back after a
+  timeout. Real and mock backends are represented so host-side tests can
+  use a fake sysroot rather than hardware. Board manifests and example
+  schemas are concrete configuration inputs; documentation explains offline
+  vendoring and cross-target builds.
 
-A field engineer or operator points a browser at the device
-(`https://<device>:8443`) and configures it: system identity, networking,
-services, updates, monitoring, logs, alerts, security, and I/O — all behind
-authenticated, role-based access with a commit/confirm rollback safety net for
-networking changes.
+- The root Makefile is the operational contract: `make build`, `release`,
+  `test`, `lint`, `fmt`, `vendor`, `cross`, `run`, `run-mock`, and `check`
+  are declared. Automated evidence is visible in
+  `crates/webconfigd/src/tests.rs`; the remaining behavior should be
+  treated as partially covered until the full Rust test suite is run. The
+  project is an implemented service with integration and deployment risk
+  still requiring device-level confirmation.
 
-- **One daemon**, `current_thread` tokio runtime, rustls (no OpenSSL), no
-  database (JSON + ring files). Target: <15 MB RAM, 3-6 MB stripped binary.
-- **Vanilla JS frontend**, no build step, no node at build time, <500 KB total.
-- **Schema-driven rendering**: adding a setting is a schema file — zero UI code.
-- **Flagship networking rollback**: network changes are provisional; reconnect
-  and confirm within a window or they auto-roll-back.
-- **Real + mock system interactions**: RAUC/zbus talk to real backends on-device
-  and to mocks on the fake-sysroot test harness (no hardware to test).
+## Feature Inventory
 
-## Repository layout
+| # | Name / Description | Implemented? | Test Coverage? | Manual Test |
+|---:|---|---|---|---|
+| 1 | Rust workspace and pinned release profile (`Cargo.toml`, `rust-toolchain.toml`) | Implemented | `make build` and `make lint` declared | [ ] Manual verification required |
+| 2 | Configuration engine and persistent state | Implemented | `crates/webconfigd/src/tests.rs`; broader coverage not confirmed | [ ] Manual verification required |
+| 3 | Axum WebConfig daemon | Implemented | HTTP tests present in daemon test module | [ ] Manual verification required |
+| 4 | TLS via rustls | Implemented | No focused TLS integration file found | [ ] Manual verification required |
+| 5 | Authentication, roles, and CSRF controls | Implemented | No complete security matrix found | [ ] Manual verification required |
+| 6 | Schema-driven frontend rendering | Implemented | No frontend test suite found | [ ] Manual verification required |
+| 7 | Board manifest selection (`polaris.json`, `generic.yaml`) | Implemented | No manifest matrix test found | [ ] Manual verification required |
+| 8 | Network commit/confirm rollback workflow | Implemented | No dedicated rollback test found | [ ] Manual verification required |
+| 9 | Monitoring, alerts, and SSE updates | Partial | HTTP test evidence exists; event coverage unclear | [ ] Manual verification required |
+| 10 | Real and fake sysroot backends | Implemented | `make test` and `make run-mock` declared | [ ] Manual verification required |
+| 11 | Yocto `meta-webconfig` packaging | Implemented | No BitBake integration test found | [ ] Manual verification required |
+| 12 | Offline vendor and cross-build workflow | Implemented | `make vendor`, `make cross` declared | [ ] Manual verification required |
+| 13 | Release artifact/checksum workflow | Partial | Script exists; output not independently verified | [ ] Manual verification required |
 
-```
-Cargo.toml                  # workspace, pinned deps, exact release profile
-crates/
-  webconfig-engine/         # config store, appliers, schema, manifest, alert/monitoring
-  webconfigd/               # axum HTTP daemon (TLS, auth, CSRF, 9 section APIs, SSE)
-frontend/                   # vanilla JS: index.html, styles.css, schema-form.js, pages.js, app.js
-schemas/                    # *.schema.json — schema-driven rendering + validation
-board-manifests/            # polaris.json (board-specific data) + generic.yaml fallback
-meta-webconfig/             # Yocto layer: daemon, static assets, schemas, manifest, hardened unit
-docs/                       # spec, API reference, schema format, board-manifest spec, planning/audits
-Makefile                    # build | release | test | lint | fmt | vendor | cross | run | clean
-```
-
-## Build & test
-
-The repo-root Makefile is the single entry point (per SoCcentric conventions):
+## Validation
 
 ```bash
-make build    # debug build (host target)
-make release  # exact spec release profile (opt-level=z, lto, panic=abort, stripped)
-make test     # engine + HTTP integration tests (fake sysroot, no hardware)
-make lint     # clippy -D warnings + rustfmt --check
-make vendor   # regenerate the offline crate tarball for reproducible builds
-make cross    # build all three cross-targets: x86_64, aarch64, armv7
-make run      # run the daemon against a tempdir fake sysroot (dev)
+make check
+make run-mock
 ```
 
-Validation gate (used by the git workflows and CI): `make build && make test && make lint`.
-
-## Cross-targets
-
-`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
-`armv7-unknown-linux-gnueabihf`. Vendored crates + `CARGO_NET_OFFLINE=1` make
-builds fully offline and reproducible.
-
-## Deploying (Yocto)
-
-Add the layer and packages to your image:
-
-```bitbake
-IMAGE_INSTALL:append = " webconfigd webconfig-static webconfig-schemas webconfig-manifest"
-```
-
-Map your BSP `MACHINE` to its board manifest in
-`meta-webconfig/recipes-core/webconfig/webconfig-manifest.bbappend`.
-See [`meta-webconfig/README.md`](meta-webconfig/README.md).
-
-## Documentation
-
-- [Design specification](docs/webconfig-spec.md)
-- [REST API reference](docs/api-reference.md)
-- [Schema format](docs/schema-format.md)
-- [Board-manifest format](docs/board-manifest.md)
-- [Production-readiness audit](docs/planning/MasterPlan.md) and its [acceptance checklist](docs/planning/Checkpoint.md)
-
-## License
-
-CLOSED (SoCcentric internal IV&V tooling).
+Browser behavior, TLS certificate deployment, rollback under network loss, and Yocto installation remain manual checks.
